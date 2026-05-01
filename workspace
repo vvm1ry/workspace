@@ -72,14 +72,14 @@ def generate_group_name(specialty_code=None):
         num = specialty_code + random.randint(0, 99)
     else:
         num = random.choice([100, 200, 300, 400, 600]) + random.randint(0, 99)
-    
+
     letter = random.randint(1, 9)
     suffix = random.randint(1, 3)
     return f"К{num}С{letter}-{suffix}"
 
 def generate_data_for_student(username, specialty_code):
     subjects = SPECIALTIES.get(specialty_code, ["Общий предмет", "Физкультура"])
-    
+
     schedule = {}
     for day in week_days:
         lessons = []
@@ -93,20 +93,20 @@ def generate_data_for_student(username, specialty_code):
                 room = random.choice(random.choice(room_ranges))
                 lessons.append((subj, room, f"{format_time(start)}-{format_time(end)}", start))
         schedule[day] = lessons
-    
+
     consultations = {}
     for day in ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница"]:
         start = random.choice([8, 9, 10, 11, 12, 13, 14, 15])
         room = random.choice(random.choice(room_ranges))
         subj = random.choice(subjects)
         consultations[day] = (subj, room, f"{start}:00-{start+1}:00")
-    
+
     grades = {}
     for subj in subjects:
         max_pz = random.randint(10, 20)
         pz = [random.randint(40, 100) if i < max_pz else None for i in range(20)]
         grades[subj] = {"pz": pz, "max_pz": max_pz}
-    
+
     if username in STUDENTS:
         STUDENTS[username]["schedule"] = schedule
         STUDENTS[username]["consultations"] = consultations
@@ -133,18 +133,54 @@ def approve_user(username):
         password = PENDING_USERS.pop(username)
         USERS[username] = password
         APPROVED_USERS.add(username)
-        
+
         spec_codes = [100, 200, 300, 400, 600]
         chosen_spec = random.choice(spec_codes)
-        
+
         group = generate_group_name(chosen_spec)
         attempts = 0
         while group in [s["group"] for s in STUDENTS.values()] and attempts < 100:
             group = generate_group_name(chosen_spec)
             attempts += 1
-            
+
+        # Создаем запись с пустыми оценками, но заполняем расписание и консультации
         STUDENTS[username] = {"group": group, "specialty": chosen_spec, "schedule": {}, "consultations": {}, "grades": {}}
-        generate_data_for_student(username, chosen_spec)
+        
+        # Генерируем расписание и консультации (оценки не генерируем)
+        subjects = SPECIALTIES.get(chosen_spec, ["Общий предмет"])
+        
+        # Генерация расписания
+        schedule = {}
+        for day in week_days:
+            lessons = []
+            if day == "Суббота":
+                lessons = [(random.choice(subjects), "", "Лекция", None)]
+            else:
+                count = random.randint(2, 4)
+                used_slots = sorted(random.sample(time_slots, min(count, len(time_slots))), key=lambda x: x[0])
+                for start, end in used_slots:
+                    subj = random.choice(subjects)
+                    room = random.choice(random.choice(room_ranges))
+                    lessons.append((subj, room, f"{format_time(start)}-{format_time(end)}", start))
+            schedule[day] = lessons
+        
+        # Генерация консультаций
+        consultations = {}
+        for day in ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница"]:
+            start = random.choice([8, 9, 10, 11, 12, 13, 14, 15])
+            room = random.choice(random.choice(room_ranges))
+            subj = random.choice(subjects)
+            consultations[day] = (subj, room, f"{start}:00-{start+1}:00")
+
+        STUDENTS[username]["schedule"] = schedule
+        STUDENTS[username]["consultations"] = consultations
+        # Grades оставляем пустыми {}
+
+        # Добавляем в список недавно принятых
+        RECENTLY_APPROVED.insert(0, {"username": username, "group": group, "specialty": chosen_spec})
+        if len(RECENTLY_APPROVED) > 10:
+            RECENTLY_APPROVED.pop()
+
         return True
     return False
 
@@ -156,7 +192,8 @@ def reject_user(username):
 
 # Инициализация данных для старых студентов при запуске
 def init_students_data():
-    for username in ["student", "student2", "student3"]:
+    # Добавляем оценки для всех существующих студентов (student - student9)
+    for username in ["student", "student2", "student3", "student4", "student5", "student6", "student7", "student8", "student9"]:
         if not STUDENTS[username]["schedule"]:
             group = STUDENTS[username]["group"]
             spec_code = get_specialty_code(group)
@@ -335,18 +372,18 @@ tr:hover td { background:rgba(255,255,255,0.08); color: #fff; }
     background: linear-gradient(180deg, rgba(20,20,30,0.9) 0%, rgba(10,10,15,0.85) 100%);
     border-right: 1px solid rgba(100, 100, 255, 0.1);
 }
-.left-panel h2, .director-panel h2 { 
-    font-size: 20px; margin-top: 0; color: #fff; 
-    border-bottom: 1px solid rgba(255,255,255,0.2); 
-    padding-bottom: 15px; 
+.left-panel h2, .director-panel h2 {
+    font-size: 20px; margin-top: 0; color: #fff;
+    border-bottom: 1px solid rgba(255,255,255,0.2);
+    padding-bottom: 15px;
     margin-bottom: 20px;
 }
-.left-panel h3, .director-panel h3 { 
-    font-size: 16px; margin-top: 25px; color: #a5b4fc; 
+.left-panel h3, .director-panel h3 {
+    font-size: 16px; margin-top: 25px; color: #a5b4fc;
     text-transform: uppercase; letter-spacing: 1px; font-size: 12px;
 }
-.left-panel p, .left-panel li, .director-panel p, .director-panel li { 
-    font-size: 14px; line-height: 1.7; color: #cbd5e1; 
+.left-panel p, .left-panel li, .director-panel p, .director-panel li {
+    font-size: 14px; line-height: 1.7; color: #cbd5e1;
 }
 .left-panel ul, .director-panel ul { padding-left: 20px; }
 
@@ -389,9 +426,9 @@ tr:hover td { background:rgba(255,255,255,0.08); color: #fff; }
     display: flex; justify-content: space-between; align-items: center;
     border: 1px solid transparent;
 }
-.group-item:hover, .student-item:hover { 
-    background: rgba(255,255,255,0.1); 
-    transform: translateX(5px); 
+.group-item:hover, .student-item:hover {
+    background: rgba(255,255,255,0.1);
+    transform: translateX(5px);
     border-color: rgba(255,255,255,0.2);
 }
 
@@ -463,6 +500,181 @@ option { background: #1e293b; color: white; }
 .lesson-subj { color: #fff; font-weight: 500; }
 .lesson-room { color: #94a3b8; font-size: 13px; background: rgba(255,255,255,0.1); padding: 2px 8px; border-radius: 6px; }
 
+/* ===== АДАПТАЦИЯ ПОД РАЗНЫЕ ЭКРАНЫ ===== */
+
+/* Планшеты (до 1024px) */
+@media (max-width: 1024px) {
+    .container {
+        max-width: 100%;
+        padding: 20px;
+        margin: 80px auto 30px auto;
+    }
+
+    .left-panel, .director-panel {
+        width: 280px;
+        padding: 30px 20px;
+    }
+
+    table {
+        min-width: 1000px;
+    }
+
+    .schedule-grid {
+        grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    }
+}
+
+/* Мобильные устройства (до 768px) */
+@media (max-width: 768px) {
+    body {
+        font-size: 14px;
+    }
+
+    .navbar {
+        top: 10px;
+        width: 90%;
+        justify-content: center;
+        padding: 10px 15px;
+    }
+
+    .navbar a {
+        padding: 6px 12px;
+        font-size: 13px;
+    }
+
+    .container {
+        padding: 15px;
+        margin: 70px auto 20px auto;
+    }
+
+    .glass {
+        padding: 20px;
+        margin: 15px 0;
+        border-radius: 16px;
+    }
+
+    /* Боковые панели скрываем или делаем компактными */
+    .left-panel, .director-panel {
+        position: relative;
+        width: 100%;
+        height: auto;
+        padding: 20px;
+        margin-bottom: 20px;
+        border-right: none;
+        border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+
+    .rightpanel, .search {
+        position: relative;
+        right: auto;
+        bottom: auto;
+        width: 100%;
+        margin: 10px 0;
+    }
+
+    .search {
+        bottom: auto;
+    }
+
+    input, textarea, button, select {
+        padding: 10px;
+        font-size: 14px;
+    }
+
+    table {
+        min-width: 100%;
+        font-size: 13px;
+    }
+
+    th, td {
+        padding: 10px 6px;
+    }
+
+    .schedule-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .public-nav {
+        flex-wrap: wrap;
+    }
+
+    .view-btn {
+        padding: 8px 14px;
+        margin: 3px;
+        font-size: 13px;
+    }
+}
+
+/* Маленькие мобильные (до 480px) */
+@media (max-width: 480px) {
+    body {
+        font-size: 13px;
+    }
+
+    .navbar {
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .navbar a {
+        width: 100%;
+        text-align: center;
+        padding: 8px;
+    }
+
+    .container {
+        padding: 10px;
+        margin: 120px auto 15px auto;
+    }
+
+    .glass {
+        padding: 15px;
+        border-radius: 12px;
+    }
+
+    .left-panel h2, .director-panel h2 {
+        font-size: 18px;
+    }
+
+    .left-panel h3, .director-panel h3 {
+        font-size: 11px;
+    }
+
+    input, textarea, button, select {
+        padding: 8px;
+        font-size: 13px;
+    }
+
+    button {
+        font-size: 14px;
+    }
+
+    th {
+        font-size: 12px;
+        padding: 12px 4px;
+    }
+
+    td {
+        font-size: 12px;
+        padding: 8px 4px;
+    }
+
+    .day-card {
+        padding: 15px;
+    }
+
+    .lesson-item {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 5px;
+    }
+
+    .public-btn {
+        width: 100%;
+        text-align: center;
+    }
+}
 
 </style>
 """
@@ -471,7 +683,7 @@ LEFT_PANEL_CONTENT = """
 <div class='left-panel'>
     <h2>Аккаунт Студента</h2>
     <p>Добро пожаловать в личный кабинет. Здесь вы найдете всю необходимую информацию для успешной учебы.</p>
-    
+
     <h3>Учебный процесс</h3>
     <ul>
         <li>Актуальное расписание занятий</li>
@@ -482,7 +694,7 @@ LEFT_PANEL_CONTENT = """
 
     <h3>Важно</h3>
     <p>Следите за уведомлениями в правой панели. Не пропускайте контрольные точки и сдавайте практические задания вовремя.</p>
-    
+
     <h3>Поддержка</h3>
     <p>Если у вас возникли вопросы, используйте чат с куратором или раздел FAQ.</p>
 </div>
@@ -492,7 +704,7 @@ DIRECTOR_LEFT_PANEL_CONTENT = """
 <div class='director-panel'>
     <h2>Аккаунт Директора</h2>
     <p>Панель административного управления учебным процессом колледжа.</p>
-    
+
     <h3>Управление</h3>
     <ul>
         <li>Мониторинг успеваемости групп</li>
@@ -503,7 +715,7 @@ DIRECTOR_LEFT_PANEL_CONTENT = """
 
     <h3>Статистика</h3>
     <p>Система автоматически формирует отчеты по посещаемости и среднему баллу в реальном времени.</p>
-    
+
     <h3>Быстрый доступ</h3>
     <p>Используйте поиск в правой панели для мгновенного нахождения любого студента или группы по номеру или фамилии.</p>
 </div>
@@ -532,12 +744,12 @@ def search():
     for k, v in routes.items():
         if k in q:
             return redirect(v)
-    
+
     if 'user' not in session: return redirect('/login')
     username = session['user']
     nav = get_nav_for_user(username)
     right_panel = get_right_panel_for_user(username)
-    
+
     error_html = f"""
     <div class='container' style='margin-top:90px;'>
         <div class='glass'>
@@ -557,10 +769,10 @@ def director_search():
     if 'user' not in session or session['user'] != 'director': return redirect('/login')
     query = request.args.get('q', '').strip()
     if not query: return redirect('/admin')
-    
+
     nav = get_nav_for_user('director')
     right_panel = get_right_panel_for_user('director')
-    
+
     # Поиск разделов
     routes = {
         "расписание": "/schedule", "оценки": "/grades", "консультации": "/consultations",
@@ -578,7 +790,7 @@ def director_search():
         group = data.get('group', '')
         if query_lower in user.lower() or query_lower in group.lower():
             found_users.append((user, data))
-    
+
     html = "<div class='container' style='margin-top:90px;'><h1>Результаты поиска</h1>"
     if not found_users:
         html += f"<div class='glass'><p>Пользователи по запросу '{query}' не найдены. Попробуйте ввести имя студента или номер группы.</p><a href='/admin'>Назад в панель</a></div>"
@@ -587,7 +799,7 @@ def director_search():
             group = data.get('group', 'Нет группы')
             password = USERS.get(user, 'Неизвестен')
             group_count = sum(1 for u, d in STUDENTS.items() if d.get('group') == group and u != 'director')
-            
+
             html += f"""
             <div class='search-result-card'>
                 <h2 style='margin-top:0;'>{user}</h2>
@@ -607,14 +819,14 @@ def director_search():
 def public_schedule():
     groups = sorted(list(set(d['group'] for d in STUDENTS.values() if d['group'] != 'Директор')))
     selected_group = request.args.get('group', groups[0] if groups else '')
-    
+
     schedule_data = {}
     if selected_group:
         for u, d in STUDENTS.items():
             if d['group'] == selected_group:
                 schedule_data = d.get('schedule', {})
                 break
-    
+
     html = f"""
     <div class='container' style='margin-top:100px;'>
         <div class='public-header'>
@@ -624,7 +836,7 @@ def public_schedule():
                 <a href='/register' class='public-btn'>Регистрация</a>
             </div>
         </div>
-        
+
         <div class='glass'>
             <h2>Выберите группу</h2>
             <div class='group-select-container'>
@@ -635,7 +847,7 @@ def public_schedule():
                 </form>
             </div>
         </div>
-        
+
         {render_schedule_content(selected_group, schedule_data) if selected_group else "<div class='glass'>Выберите группу для просмотра</div>"}
     </div>
     """
@@ -644,7 +856,7 @@ def public_schedule():
 def render_schedule_content(group_name, schedule):
     if not schedule:
         return "<div class='glass'>Расписание формируется...</div>"
-    
+
     html = f"<div class='schedule-grid'>"
     for day, lessons in schedule.items():
         html += f"<div class='day-card'><h3>{day}</h3>"
@@ -742,14 +954,14 @@ def index():
     username = session['user']
     nav = get_nav_for_user(username)
     right_panel = get_right_panel_for_user(username)
-    
+
     content = """
     <div class='container' style='margin-top:90px;'>
         <div class='glass'><h2>О колледже</h2><p>Современное образование, передовые технологии и опытные преподаватели.<br>Мы предоставляем ноутбуки каждому студенту для комфортной учебы.</p></div>
         <div class='glass'><h3>Контакты</h3><p>Телефон: +7 116 116 67 52<br>Email: college@mail.com</p></div>
     </div>
     """
-    
+
     if username == 'director':
         return STYLE + DIRECTOR_LEFT_PANEL_CONTENT + nav + right_panel + content
     else:
@@ -763,7 +975,7 @@ def schedule_page():
     right_panel = get_right_panel_for_user(username)
 
     all_groups = sorted(list(set(d['group'] for d in STUDENTS.values() if d['group'] != 'Директор')))
-    
+
     if username == "director":
         html = "<div class='container' style='margin-top:90px;'><h1>Расписание</h1>"
         html += "<div class='glass'><h2>Выберите группу</h2>"
@@ -776,9 +988,9 @@ def schedule_page():
     student_data = STUDENTS.get(username, {})
     current_group = student_data.get("group", "")
     schedule = student_data.get("schedule", {})
-    
+
     options = "".join([f"<option value='{g}' {'selected' if g == current_group else ''}>{g}</option>" for g in all_groups])
-    
+
     html = f"""
     <div class='container' style='margin-top:90px;'>
         <h1>Расписание</h1>
@@ -801,7 +1013,7 @@ def schedule_group(group_name):
     if 'user' not in session: return redirect('/login')
     username = session['user']
     source = request.args.get('source', '')
-    
+
     nav = get_nav_for_user(username)
     right_panel = get_right_panel_for_user(username)
 
@@ -817,7 +1029,7 @@ def schedule_group(group_name):
         else: return STYLE + LEFT_PANEL_CONTENT + nav + right_panel + msg
 
     schedule = STUDENTS[target_username].get("schedule", {})
-    
+
     back_link = f"<a href='/schedule' class='view-btn'>← Назад</a>"
     if source == 'search' and username == 'director':
         back_link = f"<a href='/director-search?q={group_name}' class='view-btn'>← К поиску</a>"
@@ -825,7 +1037,7 @@ def schedule_group(group_name):
     html = f"<div class='container' style='margin-top:90px;'><h1>Группа {group_name}</h1>"
     html += render_schedule_content(group_name, schedule)
     html += "<div style='margin-top:20px;'>" + back_link + "</div></div>"
-    
+
     if username == 'director': return STYLE + DIRECTOR_LEFT_PANEL_CONTENT + nav + right_panel + html
     else: return STYLE + LEFT_PANEL_CONTENT + nav + right_panel + html
 
@@ -854,7 +1066,7 @@ def consultations_page():
         for day,data in consultations.items():
             subj,room,time=data
             html+=f"<div class='glass'><h3>{day}</h3><p style='font-size:18px;'>{time} | <b>{subj}</b> — каб. {room}</p></div>"
-    
+
     if username == 'director': return STYLE + DIRECTOR_LEFT_PANEL_CONTENT + nav + right_panel + html + "</div>"
     else: return STYLE + LEFT_PANEL_CONTENT + nav + right_panel + html + "</div>"
 
@@ -872,7 +1084,7 @@ def consultations_group(group_name):
         if data["group"] == group_name:
             target_username = user
             break
-            
+
     if not target_username:
         return STYLE+DIRECTOR_LEFT_PANEL_CONTENT+nav+right_panel+"<div class='container'><div class='glass'><h2>Ошибка</h2><p>Группа не найдена</p><a href='/consultations'>Назад</a></div></div>"
 
@@ -902,7 +1114,7 @@ def grades_page():
             g = data.get("group", "Без группы")
             if g not in groups_map: groups_map[g] = []
             groups_map[g].append(user)
-        
+
         html = "<div class='container' style='margin-top:100px;'><h1>Успеваемость</h1>"
         html += "<div class='glass'><h2>Группы</h2>"
         html += "<ul class='group-list'>"
@@ -943,12 +1155,12 @@ def grades_page():
 def grades_group_list(group_name):
     if 'user' not in session or session['user'] != 'director':
         return redirect('/grades')
-    
+
     nav = get_nav_for_user('director')
     right_panel = get_right_panel_for_user('director')
-    
+
     students_in_group = [u for u, d in STUDENTS.items() if d.get('group') == group_name and u != 'director']
-    
+
     html = f"<div class='container' style='margin-top:100px;'><h1>Группа {group_name}</h1>"
     html += "<div class='glass'><h2>Студенты</h2>"
     html += "<ul class='student-list'>"
@@ -957,7 +1169,7 @@ def grades_group_list(group_name):
     html += "</ul>"
     html += f"<a href='/grades' class='view-btn' style='margin-top:15px;'>← Назад</a>"
     html += "</div></div>"
-    
+
     return STYLE+DIRECTOR_LEFT_PANEL_CONTENT+nav+right_panel+html
 
 @app.route('/grades/student/<student_username>')
@@ -977,7 +1189,7 @@ def grades_student(student_username):
 
     html=f"<div class='container' style='margin-top:100px;'><h1>Оценки: {student_username}</h1>"
     html += f"<div class='glass' style='margin-bottom:20px;'><strong>Группа:</strong> {group}</div>"
-    
+
     if not student_grades:
         html += "<div class='glass'>Нет данных</div>"
     else:
@@ -1000,7 +1212,7 @@ def grades_student(student_username):
             final_cls = "grade-good" if avg >= 80 else ("grade-avg" if avg >= 50 else "grade-bad")
             html+=f"<td class='{final_cls}' style='font-weight:bold; font-size:16px;'>{avg}</td><td class='{final_cls}' style='font-weight:bold; font-size:16px;'>{avg}</td></tr>"
         html+="</table></div>"
-    
+
     back_link = f'/grades/group/{group}' if group != "Неизвестная группа" else '/grades'
     html += f"<a href='{back_link}' class='view-btn' style='margin-top:15px;'>← Назад</a></div>"
     return STYLE+DIRECTOR_LEFT_PANEL_CONTENT+nav+right_panel+html
@@ -1011,11 +1223,11 @@ def materials():
     username = session['user']
     nav = get_nav_for_user(username)
     right_panel = get_right_panel_for_user(username)
-    
+
     html = "<div class='container' style='margin-top:90px;'><h1>Учебные материалы</h1>"
-    
+
     subjects_to_show = []
-    
+
     if username == 'director':
         # Директор видит ВСЕ предметы
         subjects_to_show = ALL_SUBJECTS
@@ -1029,7 +1241,7 @@ def materials():
         else:
             # Для старых аккаунтов или если спец не найдена
             subjects_to_show = ["Общие материалы", "Физкультура", "Безопасность жизнедеятельности"]
-    
+
     html += "<div class='schedule-grid'>"
     for subj in subjects_to_show:
         html += f"""
@@ -1040,7 +1252,7 @@ def materials():
         </div>
         """
     html += "</div></div>"
-    
+
     if username == 'director':
         return STYLE + DIRECTOR_LEFT_PANEL_CONTENT + nav + right_panel + html
     else:
@@ -1052,7 +1264,7 @@ def faq():
     username = session['user']
     nav = get_nav_for_user(username)
     right_panel = get_right_panel_for_user(username)
-    
+
     html = """
     <div class='container' style='margin-top:90px;'>
         <h1>FAQ</h1>
@@ -1078,16 +1290,16 @@ def chat():
     if 'user' not in session: return redirect('/login')
     username = session['user']
     if username == 'director': return redirect('/')
-    
+
     nav = get_nav_for_user(username)
     right_panel = get_right_panel_for_user(username)
-    
+
     if request.method == 'POST':
         msg = request.form.get('message', '')
         if msg:
             CHAT.append({"user": username, "msg": msg})
             return redirect('/chat')
-    
+
     html = "<div class='container' style='margin-top:90px;'><h1>Чат с куратором</h1>"
     html += "<div class='glass' style='height: 400px; overflow-y: auto; margin-bottom: 20px; background: rgba(0,0,0,0.3);'>"
     if not CHAT:
@@ -1097,7 +1309,7 @@ def chat():
             style = "text-align:right; color:#a5b4fc;" if entry['user'] == username else "text-align:left; color:#fff;"
             html += f"<p style='{style}'><b>{entry['user']}:</b> {entry['msg']}</p>"
     html += "</div>"
-    
+
     html += """
     <div class='glass'>
         <form method='post'>
@@ -1115,12 +1327,12 @@ def notifications():
     username = session['user']
     nav = get_nav_for_user(username)
     right_panel = get_right_panel_for_user(username)
-    
+
     html = "<div class='container' style='margin-top:90px;'><h1>Уведомления</h1>"
     for note in NOTIFICATIONS:
         html += f"<div class='glass'><p>{note}</p></div>"
     html += "</div>"
-    
+
     panel = DIRECTOR_LEFT_PANEL_CONTENT if username == 'director' else LEFT_PANEL_CONTENT
     return STYLE + panel + nav + right_panel + html
 
@@ -1128,16 +1340,16 @@ def notifications():
 def notifications_director():
     if 'user' not in session or session['user'] != 'director':
         return redirect('/login')
-    
+
     nav = get_nav_for_user('director')
     right_panel = get_right_panel_for_user('director')
-    
+
     if request.method == 'POST':
         msg = request.form.get('message', '')
         if msg:
             NOTIFICATIONS.append(msg)
             return redirect('/notifications')
-    
+
     html = """
     <div class='container' style='margin-top:90px;'>
         <h1>Новое оповещение</h1>
@@ -1156,12 +1368,12 @@ def notifications_director():
 def admin():
     if 'user' not in session or session['user'] != 'director':
         return redirect('/login')
-    
+
     nav = get_nav_for_user('director')
     right_panel = get_right_panel_for_user('director')
-    
+
     html = "<div class='container' style='margin-top:90px;'><h1>Панель директора</h1>"
-    
+
     # Заявки
     html += "<div class='glass'><h2>Заявки на регистрацию</h2>"
     if not PENDING_USERS:
@@ -1178,11 +1390,11 @@ def admin():
             </div>
             """
     html += "</div>"
-    
+
     # Статистика
     total_students = len([u for u in STUDENTS if u != 'director'])
     total_groups = len(set(d['group'] for d in STUDENTS.values() if d['group'] != 'Директор'))
-    
+
     html += f"""
     <div class='schedule-grid'>
         <div class='day-card' style='text-align:center;'>
