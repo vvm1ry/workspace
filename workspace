@@ -18,6 +18,7 @@ PENDING_USERS = {}
 
 # Одобренные пользователи
 APPROVED_USERS = {"student", "student2", "student3", "director"}
+RECENTLY_APPROVED = []  # Список недавно принятых аккаунтов
 
 # Специальности и их предметы
 SPECIALTIES = {
@@ -143,10 +144,10 @@ def approve_user(username):
             group = generate_group_name(chosen_spec)
             attempts += 1
 
-        # Создаем запись с пустыми оценками, но заполняем расписание и консультации
+        # Создаем запись студента с пустыми оценками
         STUDENTS[username] = {"group": group, "specialty": chosen_spec, "schedule": {}, "consultations": {}, "grades": {}}
         
-        # Генерируем расписание и консультации (оценки не генерируем)
+        # Генерируем расписание и консультации (но НЕ оценки)
         subjects = SPECIALTIES.get(chosen_spec, ["Общий предмет"])
         
         # Генерация расписания
@@ -172,6 +173,7 @@ def approve_user(username):
             subj = random.choice(subjects)
             consultations[day] = (subj, room, f"{start}:00-{start+1}:00")
 
+        # Сохраняем сгенерированные данные
         STUDENTS[username]["schedule"] = schedule
         STUDENTS[username]["consultations"] = consultations
         # Grades оставляем пустыми {}
@@ -1372,46 +1374,87 @@ def admin():
     nav = get_nav_for_user('director')
     right_panel = get_right_panel_for_user('director')
 
+    # Подсчет статистики
+    total_students = len([u for u in STUDENTS if u != 'director'])
+    total_groups = len(set(d['group'] for d in STUDENTS.values() if d['group'] != 'Директор'))
+    pending_count = len(PENDING_USERS)
+
     html = "<div class='container' style='margin-top:90px;'><h1>Панель директора</h1>"
 
-    # Заявки
-    html += "<div class='glass'><h2>Заявки на регистрацию</h2>"
+    # 1. ВЕРХ: Статистика (Карточки)
+    html += f"""
+    <div class='schedule-grid' style='margin-bottom: 30px;'>
+        <div class='day-card' style='text-align:center; border-color: rgba(74, 222, 128, 0.3);'>
+            <h3>Всего студентов</h3>
+            <p style='font-size:36px; font-weight:bold; color:#4ade80; margin: 10px 0;'>{total_students}</p>
+        </div>
+        <div class='day-card' style='text-align:center; border-color: rgba(96, 165, 250, 0.3);'>
+            <h3>Всего групп</h3>
+            <p style='font-size:36px; font-weight:bold; color:#60a5fa; margin: 10px 0;'>{total_groups}</p>
+        </div>
+        <div class='day-card' style='text-align:center; border-color: rgba(251, 191, 36, 0.3);'>
+            <h3>Заявок в очереди</h3>
+            <p style='font-size:36px; font-weight:bold; color:#fbbf24; margin: 10px 0;'>{pending_count}</p>
+        </div>
+    </div>
+    """
+
+    # 2. СЕРЕДИНА: Заявки на регистрацию
+    html += "<div class='glass' style='margin-bottom: 30px;'><h2>Заявки на регистрацию</h2>"
     if not PENDING_USERS:
-        html += "<p>Нет новых заявок.</p>"
+        html += "<p style='opacity:0.7; font-style:italic;'>Нет новых заявок на одобрение.</p>"
     else:
         for user in list(PENDING_USERS.keys()):
             html += f"""
-            <div style='display:flex; justify-content:space-between; align-items:center; padding:15px; background:rgba(255,255,255,0.05); margin:10px 0; border-radius:10px;'>
-                <span>{user}</span>
+            <div style='display:flex; justify-content:space-between; align-items:center; padding:15px; background:rgba(255,255,255,0.05); margin:10px 0; border-radius:12px; border: 1px solid rgba(255,255,255,0.05);'>
+                <div style='display:flex; align-items:center; gap:15px;'>
+                    <div style='width:40px; height:40px; background:rgba(255,255,255,0.1); border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:bold;'>{user[0].upper()}</div>
+                    <span style='font-size:16px; font-weight:500;'>{user}</span>
+                </div>
                 <div style='display:flex; gap:10px;'>
-                    <a href='/approve/{user}' class='action-btn approve-btn' title='Одобрить'>✔</a>
-                    <a href='/reject/{user}' class='action-btn reject-btn' title='Отклонить'>✖</a>
+                    <a href='/approve/{user}' style='background:rgba(74, 222, 128, 0.2); color:#4ade80; padding:8px 16px; border-radius:8px; text-decoration:none; font-weight:600; transition:0.2s;' onmouseover="this.style.background='rgba(74, 222, 128, 0.4)'" onmouseout="this.style.background='rgba(74, 222, 128, 0.2)'">✔ Одобрить</a>
+                    <a href='/reject/{user}' style='background:rgba(248, 113, 113, 0.2); color:#f87171; padding:8px 16px; border-radius:8px; text-decoration:none; font-weight:600; transition:0.2s;' onmouseover="this.style.background='rgba(248, 113, 113, 0.4)'" onmouseout="this.style.background='rgba(248, 113, 113, 0.2)'">✖ Отклонить</a>
                 </div>
             </div>
             """
     html += "</div>"
 
-    # Статистика
-    total_students = len([u for u in STUDENTS if u != 'director'])
-    total_groups = len(set(d['group'] for d in STUDENTS.values() if d['group'] != 'Директор'))
+    # 3. НИЗ: Недавно принятые аккаунты
+    html += "<div class='glass'><h2>Недавно принятые аккаунты</h2>"
+    if not RECENTLY_APPROVED:
+        html += "<p style='opacity:0.7; font-style:italic;'>Список недавно одобренных студентов пуст.</p>"
+    else:
+        html += "<ul class='student-list'>"
+        for student_info in RECENTLY_APPROVED:
+            user = student_info["username"]
+            group = student_info["group"]
+            spec = student_info["specialty"]
+            # Получаем название специальности по первому предмету
+            spec_name = SPECIALTIES.get(spec, ["Неизвестно"])[0]
+            
+            html += f"""
+            <li class='student-item' style='flex-direction: column; align-items: flex-start; gap: 8px; padding: 20px;'>
+                <div style='display:flex; justify-content:space-between; width:100%; align-items:center; flex-wrap:wrap; gap:10px;'>
+                    <div style='display:flex; align-items:center; gap:12px;'>
+                        <div style='width:36px; height:36px; background:rgba(99, 102, 241, 0.2); color:#a5b4fc; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:bold; font-size:14px;'>{user[0].upper()}</div>
+                        <span style='font-weight:bold; font-size:16px; color:#fff;'>{user}</span>
+                    </div>
+                    <div style='text-align:right;'>
+                        <div style='font-size:14px; color:#cbd5e1; font-weight:500;'>{group}</div>
+                        <div style='font-size:12px; opacity:0.6;'>{spec_name}</div>
+                    </div>
+                </div>
+                <div style='display: flex; gap: 10px; margin-top: 5px;'>
+                    <a href='/grades/student/{user}' class='view-btn' style='font-size:12px; padding:6px 12px; margin:0; background:rgba(255,255,255,0.05);'>📊 Оценки</a>
+                    <a href='/schedule/group/{group}' class='view-btn' style='font-size:12px; padding:6px 12px; margin:0; background:rgba(255,255,255,0.05);'>📅 Расписание</a>
+                </div>
+            </li>
+            """
+        html += "</ul>"
+    html += "</div>"
 
-    html += f"""
-    <div class='schedule-grid'>
-        <div class='day-card' style='text-align:center;'>
-            <h3>Студентов</h3>
-            <p style='font-size:32px; font-weight:bold; color:#4ade80;'>{total_students}</p>
-        </div>
-        <div class='day-card' style='text-align:center;'>
-            <h3>Групп</h3>
-            <p style='font-size:32px; font-weight:bold; color:#60a5fa;'>{total_groups}</p>
-        </div>
-        <div class='day-card' style='text-align:center;'>
-            <h3>Заявок</h3>
-            <p style='font-size:32px; font-weight:bold; color:#fbbf24;'>{len(PENDING_USERS)}</p>
-        </div>
-    </div>
-    </div>
-    """
+    html += "</div>" # Закрытие container
+    
     return STYLE + DIRECTOR_LEFT_PANEL_CONTENT + nav + right_panel + html
 
 @app.route('/approve/<username>')
