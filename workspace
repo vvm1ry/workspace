@@ -1,0 +1,1223 @@
+from flask import Flask, render_template_string, request, redirect, session, url_for
+import random
+import re
+
+app = Flask(__name__)
+app.secret_key = 'super_secret_key_123'
+
+# Данные пользователей: логин -> пароль
+USERS = {
+    "student": "1234",
+    "student2": "1234",
+    "student3": "1234",
+    "director": "1234"
+}
+
+# Ожидающие одобрения пользователи
+PENDING_USERS = {}
+
+# Одобренные пользователи
+APPROVED_USERS = {"student", "student2", "student3", "director"}
+
+# Специальности и их предметы
+SPECIALTIES = {
+    100: ["Инженерия", "Высшая математика", "Физика", "Черчение", "Основы IT", "Механика"],
+    200: ["Анатомия", "Биология", "Химия", "Латынь", "Основы медицины", "Физиология"],
+    300: ["Экономика", "Бухгалтерский учет", "Финансы", "Статистика", "Менеджмент", "Право"],
+    400: ["Иностранный язык", "Лингвистика", "Переводоведение", "Культурология", "Фонетика", "Грамматика"],
+    600: ["Психология", "Социология", "Педагогика", "Возрастная психология", "Философия", "Логика"]
+}
+
+ALL_SUBJECTS = list(set(subj for subs in SPECIALTIES.values() for subj in subs))
+
+# Данные студентов
+STUDENTS = {
+     "student": {"group": "К520С9-2", "specialty": "General", "schedule": {}, "consultations": {}, "grades": {}},
+     "student2": {"group": "К305С9-1", "specialty": "General", "schedule": {}, "consultations": {}, "grades": {}},
+     "student3": {"group": "К415С9-3", "specialty": "General", "schedule": {}, "consultations": {}, "grades": {}},
+     "student4": {"group": "К520С9-2", "specialty": "General", "schedule": {}, "consultations": {}, "grades": {}},
+     "student5": {"group": "К305С9-1", "specialty": "General", "schedule": {}, "consultations": {}, "grades": {}},
+     "student6": {"group": "К415С9-3", "specialty": "General", "schedule": {}, "consultations": {}, "grades": {}},
+     "student7": {"group": "К520С9-2", "specialty": "General", "schedule": {}, "consultations": {}, "grades": {}},
+     "student8": {"group": "К305С9-1", "specialty": "General", "schedule": {}, "consultations": {}, "grades": {}},
+     "student9": {"group": "К415С9-3", "specialty": "General", "schedule": {}, "consultations": {}, "grades": {}}
+
+}
+
+room_ranges = [
+    list(range(100, 116)),
+    list(range(200, 217)),
+    list(range(300, 317)),
+    list(range(400, 416))
+]
+
+week_days = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"]
+time_slots = [(8,9),(9,10),(10,11),(11,12),(12,13),(14,15),(15,16),(16,17),(17,18)]
+
+def format_time(t):
+    h = int(t)
+    m = int((t - h) * 60)
+    return f"{h:02d}:{m:02d}"
+
+def get_specialty_code(group_name):
+    if not group_name: return None
+    match = re.search(r'К(\d+)', group_name)
+    if match:
+        code = int(match.group(1))
+        return (code // 100) * 100
+    return None
+
+def generate_group_name(specialty_code=None):
+    if specialty_code:
+        num = specialty_code + random.randint(0, 99)
+    else:
+        num = random.choice([100, 200, 300, 400, 600]) + random.randint(0, 99)
+    
+    letter = random.randint(1, 9)
+    suffix = random.randint(1, 3)
+    return f"К{num}С{letter}-{suffix}"
+
+def generate_data_for_student(username, specialty_code):
+    subjects = SPECIALTIES.get(specialty_code, ["Общий предмет", "Физкультура"])
+    
+    schedule = {}
+    for day in week_days:
+        lessons = []
+        if day == "Суббота":
+            lessons = [(random.choice(subjects), "", "Лекция", None)]
+        else:
+            count = random.randint(2, 4)
+            used_slots = sorted(random.sample(time_slots, min(count, len(time_slots))), key=lambda x: x[0])
+            for start, end in used_slots:
+                subj = random.choice(subjects)
+                room = random.choice(random.choice(room_ranges))
+                lessons.append((subj, room, f"{format_time(start)}-{format_time(end)}", start))
+        schedule[day] = lessons
+    
+    consultations = {}
+    for day in ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница"]:
+        start = random.choice([8, 9, 10, 11, 12, 13, 14, 15])
+        room = random.choice(random.choice(room_ranges))
+        subj = random.choice(subjects)
+        consultations[day] = (subj, room, f"{start}:00-{start+1}:00")
+    
+    grades = {}
+    for subj in subjects:
+        max_pz = random.randint(10, 20)
+        pz = [random.randint(40, 100) if i < max_pz else None for i in range(20)]
+        grades[subj] = {"pz": pz, "max_pz": max_pz}
+    
+    if username in STUDENTS:
+        STUDENTS[username]["schedule"] = schedule
+        STUDENTS[username]["consultations"] = consultations
+        STUDENTS[username]["grades"] = grades
+        STUDENTS[username]["specialty"] = specialty_code
+
+def register_user(username, password):
+    if username in USERS or username in PENDING_USERS:
+        return False, "Пользователь уже существует"
+
+    if username == "director":
+        USERS[username] = password
+        if username not in APPROVED_USERS:
+            APPROVED_USERS.add(username)
+        if username not in STUDENTS:
+            STUDENTS[username] = {"group": "Директор", "specialty": "Admin", "schedule": {}, "consultations": {}, "grades": {}}
+        return True, "Аккаунт директора создан"
+    else:
+        PENDING_USERS[username] = password
+        return True, "Заявка отправлена на одобрение"
+
+def approve_user(username):
+    if username in PENDING_USERS:
+        password = PENDING_USERS.pop(username)
+        USERS[username] = password
+        APPROVED_USERS.add(username)
+        
+        spec_codes = [100, 200, 300, 400, 600]
+        chosen_spec = random.choice(spec_codes)
+        
+        group = generate_group_name(chosen_spec)
+        attempts = 0
+        while group in [s["group"] for s in STUDENTS.values()] and attempts < 100:
+            group = generate_group_name(chosen_spec)
+            attempts += 1
+            
+        STUDENTS[username] = {"group": group, "specialty": chosen_spec, "schedule": {}, "consultations": {}, "grades": {}}
+        generate_data_for_student(username, chosen_spec)
+        return True
+    return False
+
+def reject_user(username):
+    if username in PENDING_USERS:
+        del PENDING_USERS[username]
+        return True
+    return False
+
+# Инициализация данных для старых студентов при запуске
+def init_students_data():
+    for username in ["student", "student2", "student3"]:
+        if not STUDENTS[username]["schedule"]:
+            group = STUDENTS[username]["group"]
+            spec_code = get_specialty_code(group)
+            if not spec_code or spec_code not in SPECIALTIES:
+                spec_code = 100
+            generate_data_for_student(username, spec_code)
+
+init_students_data()
+
+CHAT = []
+NOTIFICATIONS = ["Добро пожаловать в систему колледжа!"]
+
+STYLE = """
+<style>
+body{
+    margin:0;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    background: url('https://images.macrumors.com/article-new/2025/07/iOS-26-CarPlay-Wallpaper-10.jpeg') no-repeat center center fixed;
+    background-size: cover;
+    color:#e5e7eb;
+    line-height:1.6;
+}
+.container{
+    padding:30px;
+    margin:90px auto 40px auto;
+    max-width:1200px; /* Чуть шире для таблиц */
+}
+.glass{
+    background:rgba(20, 20, 30, 0.6);
+    border-radius:20px;
+    backdrop-filter:blur(16px);
+    -webkit-backdrop-filter:blur(16px);
+    padding:25px;
+    margin:20px 0;
+    box-sizing:border-box;
+    border: 1px solid rgba(255,255,255,0.08);
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+}
+input,textarea,button,select{
+    width:100%;
+    padding:12px;
+    border-radius:12px;
+    border:1px solid rgba(255,255,255,0.1);
+    margin-top:8px;
+    box-sizing:border-box;
+    background: rgba(255,255,255,0.05);
+    color: white;
+    font-size: 15px;
+    transition: 0.3s;
+}
+input:focus, textarea:focus, select:focus {
+    background: rgba(255,255,255,0.1);
+    outline: none;
+    border-color: rgba(255,255,255,0.3);
+}
+button {
+    background: rgba(255,255,255,0.2);
+    cursor: pointer;
+    font-weight: 600;
+}
+button:hover {
+    background: rgba(255,255,255,0.3);
+}
+
+/* Таблица оценок */
+.table-wrap {
+    overflow-x: auto;
+    margin-top: 25px;
+    border-radius: 16px;
+    border: 1px solid rgba(255,255,255,0.1);
+}
+/* ===== СКРОЛЛ БАР ДЛЯ ТАБЛИЦ ===== */
+
+/* сама дорожка */
+.table-wrap::-webkit-scrollbar {
+    height: 10px; /* горизонтальный скролл */
+}
+
+/* фон дорожки */
+.table-wrap::-webkit-scrollbar-track {
+    background: rgba(255,255,255,0.05);
+    border-radius: 10px;
+}
+
+/* ползунок */
+.table-wrap::-webkit-scrollbar-thumb {
+    background: rgba(99, 102, 241, 0.6);
+    border-radius: 10px;
+    border: 2px solid rgba(20, 20, 30, 0.6);
+}
+
+/* hover эффект */
+.table-wrap::-webkit-scrollbar-thumb:hover {
+    background: rgba(99, 102, 241, 0.9);
+}
+table{
+    width:100%;
+    border-collapse:separate;
+    border-spacing:0;
+    font-size: 15px;
+    min-width: 1400px; /* Очень широкая таблица */
+}
+th{
+    background:rgba(255,255,255,0.15);
+    padding:16px 10px;
+    font-weight:700;
+    font-size: 14px;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: #fff;
+    position: sticky;
+    top: 0;
+}
+td{
+    padding:14px 10px;
+    border-bottom:1px solid rgba(255,255,255,0.05);
+    text-align:center;
+    font-size: 14px;
+    color: #ddd;
+}
+tr:last-child td { border-bottom: none; }
+tr:nth-child(even) td { background: rgba(255,255,255,0.02); }
+tr:hover td { background:rgba(255,255,255,0.08); color: #fff; }
+
+/* Стили для оценок */
+.grade-good { color: #4ade80; font-weight: bold; }
+.grade-avg { color: #fbbf24; font-weight: bold; }
+.grade-bad { color: #f87171; font-weight: bold; }
+
+.navbar{
+    position:fixed;
+    top:15px;
+    left:50%;
+    transform:translateX(-50%);
+    display:flex;
+    gap:12px;
+    padding:12px 20px;
+    border-radius:50px;
+    background:rgba(30, 30, 40, 0.85);
+    backdrop-filter:blur(20px);
+    z-index:999;
+    flex-wrap:wrap;
+    border: 1px solid rgba(255,255,255,0.1);
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+}
+.navbar a{
+    color:#fff;
+    text-decoration:none;
+    padding:8px 16px;
+    border-radius:20px;
+    font-weight:500;
+    white-space:nowrap;
+    transition: 0.2s;
+}
+.navbar a:hover{
+    background:rgba(255,255,255,0.2);
+}
+
+/* Боковые панели */
+.left-panel, .director-panel {
+    position: fixed;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 320px;
+    background: rgba(10, 10, 15, 0.75);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    padding: 40px 25px;
+    overflow-y: auto;
+    z-index: 90;
+    border-right: 1px solid rgba(255,255,255,0.08);
+    box-shadow: 5px 0 30px rgba(0,0,0,0.3);
+}
+.director-panel {
+    background: linear-gradient(180deg, rgba(20,20,30,0.9) 0%, rgba(10,10,15,0.85) 100%);
+    border-right: 1px solid rgba(100, 100, 255, 0.1);
+}
+.left-panel h2, .director-panel h2 { 
+    font-size: 20px; margin-top: 0; color: #fff; 
+    border-bottom: 1px solid rgba(255,255,255,0.2); 
+    padding-bottom: 15px; 
+    margin-bottom: 20px;
+}
+.left-panel h3, .director-panel h3 { 
+    font-size: 16px; margin-top: 25px; color: #a5b4fc; 
+    text-transform: uppercase; letter-spacing: 1px; font-size: 12px;
+}
+.left-panel p, .left-panel li, .director-panel p, .director-panel li { 
+    font-size: 14px; line-height: 1.7; color: #cbd5e1; 
+}
+.left-panel ul, .director-panel ul { padding-left: 20px; }
+
+.rightpanel{
+    position:fixed;
+    right:20px;
+    bottom:20px;
+    width:260px;
+    display:flex;
+    flex-direction:column;
+    gap:12px;
+    z-index: 100;
+}
+.search{
+    position:fixed;
+    right:20px;
+    bottom:280px;
+    width:260px;
+    display:flex;
+    flex-direction:column;
+    gap:10px;
+    z-index: 100;
+}
+.glass a{
+    color:white;
+    text-decoration:none;
+    display:block;
+    padding:12px;
+    border-radius:12px;
+    transition: 0.2s;
+}
+.glass a:hover{
+    background:rgba(255,255,255,0.15);
+}
+
+.group-list, .student-list { list-style: none; padding: 0; margin: 0; }
+.group-item, .student-item {
+    padding: 18px; margin: 12px 0; background: rgba(255,255,255,0.05); border-radius: 14px;
+    cursor: pointer; transition: all 0.2s;
+    display: flex; justify-content: space-between; align-items: center;
+    border: 1px solid transparent;
+}
+.group-item:hover, .student-item:hover { 
+    background: rgba(255,255,255,0.1); 
+    transform: translateX(5px); 
+    border-color: rgba(255,255,255,0.2);
+}
+
+.view-btn {
+    padding: 10px 18px; background: rgba(99, 102, 241, 0.2); border-radius: 10px;
+    text-decoration: none; color: #a5b4fc; transition: all 0.2s; display: inline-block; margin: 5px;
+    border: 1px solid rgba(99, 102, 241, 0.3);
+}
+.view-btn:hover { background: rgba(99, 102, 241, 0.4); color: white; }
+
+.contact-info {
+    margin-top: 20px; padding: 15px; background: rgba(255,255,255,0.03);
+    border-radius: 12px; font-size: 13px; line-height: 1.6; border: 1px solid rgba(255,255,255,0.05);
+}
+.search-result-card {
+    background: rgba(30, 41, 59, 0.6); padding: 25px; border-radius: 16px;
+    margin-top: 20px; border: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.public-header { text-align: center; margin-bottom: 30px; }
+.public-nav { display: flex; justify-content: center; gap: 15px; margin-bottom: 20px; }
+.public-btn {
+    padding: 12px 24px; background: rgba(255,255,255,0.15); border-radius: 24px;
+    color: white; text-decoration: none; font-weight: 600; transition: background 0.2s;
+    display: inline-block;
+}
+.public-btn:hover { background: rgba(255,255,255,0.25); }
+
+.group-select-container {
+    margin: 20px 0; padding: 20px; background: rgba(0,0,0,0.2); border-radius: 16px;
+}
+option { background: #1e293b; color: white; }
+
+/* Новый стиль расписания - Grid */
+.schedule-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 20px;
+    margin-top: 20px;
+}
+.day-card {
+    background: rgba(255,255,255,0.05);
+    border-radius: 16px;
+    padding: 20px;
+    border: 1px solid rgba(255,255,255,0.05);
+    transition: transform 0.2s;
+}
+.day-card:hover {
+    transform: translateY(-5px);
+    background: rgba(255,255,255,0.08);
+}
+.day-card h3 {
+    margin-top: 0;
+    color: #818cf8;
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+    padding-bottom: 10px;
+    margin-bottom: 15px;
+}
+.lesson-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+    font-size: 14px;
+}
+.lesson-item:last-child { border-bottom: none; }
+.lesson-time { font-weight: bold; color: #cbd5e1; font-family: monospace; font-size: 15px; }
+.lesson-subj { color: #fff; font-weight: 500; }
+.lesson-room { color: #94a3b8; font-size: 13px; background: rgba(255,255,255,0.1); padding: 2px 8px; border-radius: 6px; }
+
+
+</style>
+"""
+
+LEFT_PANEL_CONTENT = """
+<div class='left-panel'>
+    <h2>Аккаунт Студента</h2>
+    <p>Добро пожаловать в личный кабинет. Здесь вы найдете всю необходимую информацию для успешной учебы.</p>
+    
+    <h3>Учебный процесс</h3>
+    <ul>
+        <li>Актуальное расписание занятий</li>
+        <li>График консультаций с преподавателями</li>
+        <li>Электронный журнал оценок</li>
+        <li>Методические материалы</li>
+    </ul>
+
+    <h3>Важно</h3>
+    <p>Следите за уведомлениями в правой панели. Не пропускайте контрольные точки и сдавайте практические задания вовремя.</p>
+    
+    <h3>Поддержка</h3>
+    <p>Если у вас возникли вопросы, используйте чат с куратором или раздел FAQ.</p>
+</div>
+"""
+
+DIRECTOR_LEFT_PANEL_CONTENT = """
+<div class='director-panel'>
+    <h2>Аккаунт Директора</h2>
+    <p>Панель административного управления учебным процессом колледжа.</p>
+    
+    <h3>Управление</h3>
+    <ul>
+        <li>Мониторинг успеваемости групп</li>
+        <li>Утверждение новых студентов</li>
+        <li>Просмотр расписания всех потоков</li>
+        <li>Рассылка уведомлений кураторам</li>
+    </ul>
+
+    <h3>Статистика</h3>
+    <p>Система автоматически формирует отчеты по посещаемости и среднему баллу в реальном времени.</p>
+    
+    <h3>Быстрый доступ</h3>
+    <p>Используйте поиск в правой панели для мгновенного нахождения любого студента или группы по номеру или фамилии.</p>
+</div>
+"""
+
+def get_nav_for_user(username):
+    if username == "director":
+        return """<div class='navbar'><a href='/'>Главная</a><a href='/schedule'>Расписание</a><a href='/consultations'>Консультации</a><a href='/grades'>Оценки</a><a href='/materials'>Материалы</a><a href='/admin'>Админ-панель</a><a href='/logout'>Выход</a></div>"""
+    else:
+        return """<div class='navbar'><a href='/'>Главная</a><a href='/schedule'>Расписание</a><a href='/consultations'>Консультации</a><a href='/grades'>Оценки</a><a href='/materials'>Материалы</a><a href='/logout'>Выход</a></div>"""
+
+def get_right_panel_for_user(username):
+    if username == "director":
+        return """<div class='rightpanel glass'><a href='/faq'>FAQ</a><a href='/notifications-director'>Оповещения</a><a href='/notifications'>Уведомления</a></div><div class='search glass'><form action='/director-search' method='GET'><input name='q' placeholder='Поиск (студент, группа, раздел)'></form></div>"""
+    else:
+        return """<div class='rightpanel glass'><a href='/faq'>FAQ</a><a href='/chat'>Чат с куратором</a><a href='/notifications'>Уведомления</a></div><div class='search glass'><form action='/search'><input name='q' placeholder='Поиск раздела'></form></div>"""
+
+@app.route('/search')
+def search():
+    q = request.args.get('q', '').lower()
+    routes = {
+        "главная": "/", "расписание": "/schedule", "консультации": "/consultations",
+        "оценки": "/grades", "материалы": "/materials", "faq": "/faq",
+        "чат": "/chat", "уведомления": "/notifications"
+    }
+    for k, v in routes.items():
+        if k in q:
+            return redirect(v)
+    
+    if 'user' not in session: return redirect('/login')
+    username = session['user']
+    nav = get_nav_for_user(username)
+    right_panel = get_right_panel_for_user(username)
+    
+    error_html = f"""
+    <div class='container' style='margin-top:90px;'>
+        <div class='glass'>
+            <h2>Ничего не найдено</h2>
+            <p>Раздел "<b>{request.args.get('q', '')}</b>" не найден.</p>
+            <a href='/' class='view-btn'>На главную</a>
+        </div>
+    </div>
+    """
+    if username != 'director':
+        return STYLE + LEFT_PANEL_CONTENT + nav + right_panel + error_html
+    else:
+        return STYLE + DIRECTOR_LEFT_PANEL_CONTENT + nav + right_panel + error_html
+
+@app.route('/director-search')
+def director_search():
+    if 'user' not in session or session['user'] != 'director': return redirect('/login')
+    query = request.args.get('q', '').strip()
+    if not query: return redirect('/admin')
+    
+    nav = get_nav_for_user('director')
+    right_panel = get_right_panel_for_user('director')
+    
+    # Поиск разделов
+    routes = {
+        "расписание": "/schedule", "оценки": "/grades", "консультации": "/consultations",
+        "материалы": "/materials", "админ": "/admin", "уведомления": "/notifications"
+    }
+    for k, v in routes.items():
+        if k in query.lower():
+            return redirect(v)
+
+    # Поиск пользователей
+    found_users = []
+    query_lower = query.lower()
+    for user, data in STUDENTS.items():
+        if user == 'director': continue
+        group = data.get('group', '')
+        if query_lower in user.lower() or query_lower in group.lower():
+            found_users.append((user, data))
+    
+    html = "<div class='container' style='margin-top:90px;'><h1>Результаты поиска</h1>"
+    if not found_users:
+        html += f"<div class='glass'><p>Пользователи по запросу '{query}' не найдены. Попробуйте ввести имя студента или номер группы.</p><a href='/admin'>Назад в панель</a></div>"
+    else:
+        for user, data in found_users:
+            group = data.get('group', 'Нет группы')
+            password = USERS.get(user, 'Неизвестен')
+            group_count = sum(1 for u, d in STUDENTS.items() if d.get('group') == group and u != 'director')
+            
+            html += f"""
+            <div class='search-result-card'>
+                <h2 style='margin-top:0;'>{user}</h2>
+                <div style="margin: 10px 0; color: #cbd5e1;"><strong>Группа:</strong> {group} | <strong>Пароль:</strong> {password}</div>
+                <div style="font-size: 13px; opacity: 0.7; margin-bottom: 15px;">Всего студентов в группе: {group_count}</div>
+                <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                    <a href='/grades/student/{user}' class='view-btn'>📊 Оценки</a>
+                    <a href='/schedule/group/{group}?source=search' class='view-btn'>📅 Расписание</a>
+                    <a href='/consultations/group/{group}?source=search' class='view-btn'>💬 Консультации</a>
+                </div>
+            </div>
+            """
+    html += "</div>"
+    return STYLE + DIRECTOR_LEFT_PANEL_CONTENT + nav + right_panel + html
+
+@app.route('/public-schedule')
+def public_schedule():
+    groups = sorted(list(set(d['group'] for d in STUDENTS.values() if d['group'] != 'Директор')))
+    selected_group = request.args.get('group', groups[0] if groups else '')
+    
+    schedule_data = {}
+    if selected_group:
+        for u, d in STUDENTS.items():
+            if d['group'] == selected_group:
+                schedule_data = d.get('schedule', {})
+                break
+    
+    html = f"""
+    <div class='container' style='margin-top:100px;'>
+        <div class='public-header'>
+            <h1>Публичное расписание</h1>
+            <div class='public-nav'>
+                <a href='/login' class='public-btn'>Вход</a>
+                <a href='/register' class='public-btn'>Регистрация</a>
+            </div>
+        </div>
+        
+        <div class='glass'>
+            <h2>Выберите группу</h2>
+            <div class='group-select-container'>
+                <form method='GET' action='/public-schedule'>
+                    <select name='group' onchange='this.form.submit()'>
+                        {''.join([f"<option value='{g}' {'selected' if g == selected_group else ''}>{g}</option>" for g in groups])}
+                    </select>
+                </form>
+            </div>
+        </div>
+        
+        {render_schedule_content(selected_group, schedule_data) if selected_group else "<div class='glass'>Выберите группу для просмотра</div>"}
+    </div>
+    """
+    return STYLE + html
+
+def render_schedule_content(group_name, schedule):
+    if not schedule:
+        return "<div class='glass'>Расписание формируется...</div>"
+    
+    html = f"<div class='schedule-grid'>"
+    for day, lessons in schedule.items():
+        html += f"<div class='day-card'><h3>{day}</h3>"
+        if not lessons:
+            html += "<p style='opacity:0.6; font-style:italic;'>Пар нет</p>"
+        else:
+            for item in lessons:
+                subj, room, time = item[0], item[1], item[2]
+                room_display = room if room else "—"
+                html += f"""
+                <div class='lesson-item'>
+                    <span class='lesson-time'>{time}</span>
+                    <span class='lesson-subj'>{subj}</span>
+                    <span class='lesson-room'>{room_display}</span>
+                </div>
+                """
+        html += "</div>"
+    html += "</div>"
+    return html
+
+@app.route('/login', methods=['GET','POST'])
+def login():
+    if request.method=='POST':
+        username = request.form.get('username', '')
+        password = request.form.get('password', '')
+        if USERS.get(username) == password:
+            session['user'] = username
+            return redirect('/')
+        return STYLE+"<div class='container'><div class='glass'><h2>Ошибка</h2><p>Неверные данные</p><a href='/login'>Назад</a></div></div>"
+
+    contact_info = """
+    <div class='contact-info'>
+        <strong>Контакты:</strong><br>
+        Директор: +7 116 116 67 52<br>
+        Email: college@mail.com
+    </div>
+    """
+    return STYLE+f"""<div class='container'><div class='glass'><h2>Вход в систему</h2>
+    <form method='post'>
+        <input name='username' placeholder='Логин'>
+        <input name='password' type='password' placeholder='Пароль'>
+        <button>Войти</button>
+    </form>
+    <p style='margin-top:15px; text-align:center;'>Нет аккаунта? <a href='/register' style='color:#a5b4fc;'>Регистрация</a></p>
+    <div style="margin-top:20px; text-align:center;">
+        <a href='/public-schedule' class='public-btn' style='display:inline-block; width:auto; font-size:14px;'>Расписание групп</a>
+    </div>
+    """ + contact_info + """
+    </div></div>"""
+
+@app.route('/register', methods=['GET','POST'])
+def register():
+    if request.method=='POST':
+        username = request.form.get('username', '')
+        password = request.form.get('password', '')
+        confirm_password = request.form.get('confirm_password', '')
+
+        if not username or not password:
+            return STYLE+"<div class='container'><div class='glass'><h2>Ошибка</h2><p>Заполните поля</p><a href='/register'>Назад</a></div></div>"
+        if password != confirm_password:
+            return STYLE+"<div class='container'><div class='glass'><h2>Ошибка</h2><p>Пароли не совпадают</p><a href='/register'>Назад</a></div></div>"
+
+        success, message = register_user(username, password)
+        if success:
+            if username == "director":
+                return STYLE+f"""<div class='container'><div class='glass'><h2>Успешно!</h2><p>{message}</p><a href='/login' class='view-btn'>Войти</a></div></div>"""
+            else:
+                return STYLE+f"""<div class='container'><div class='glass'><h2>Заявка отправлена</h2><p>{message}</p><a href='/login' class='view-btn'>На вход</a></div></div>"""
+        else:
+            return STYLE+f"<div class='container'><div class='glass'><h2>Ошибка</h2><p>{message}</p><a href='/register'>Назад</a></div></div>"
+
+    contact_info = """
+    <div class='contact-info'>
+        <strong>Контакты:</strong><br>
+        Директор: +7 116 116 67 52
+    </div>
+    """
+    return STYLE+f"""<div class='container'><div class='glass'><h2>Регистрация</h2>
+    <form method='post'>
+        <input name='username' placeholder='Логин'>
+        <input name='password' type='password' placeholder='Пароль'>
+        <input name='confirm_password' type='password' placeholder='Повтор пароля'>
+        <button>Создать аккаунт</button>
+    </form>
+    <p style='margin-top:15px; text-align:center;'>Есть аккаунт? <a href='/login' style='color:#a5b4fc;'>Войти</a></p>
+    <div style="margin-top:20px; text-align:center;">
+        <a href='/public-schedule' class='public-btn' style='display:inline-block; width:auto; font-size:14px;'>Расписание групп</a>
+    </div>
+    """ + contact_info + """
+    </div></div>"""
+
+@app.route('/')
+def index():
+    if 'user' not in session: return redirect('/login')
+    username = session['user']
+    nav = get_nav_for_user(username)
+    right_panel = get_right_panel_for_user(username)
+    
+    content = """
+    <div class='container' style='margin-top:90px;'>
+        <div class='glass'><h2>О колледже</h2><p>Современное образование, передовые технологии и опытные преподаватели.<br>Мы предоставляем ноутбуки каждому студенту для комфортной учебы.</p></div>
+        <div class='glass'><h3>Контакты</h3><p>Телефон: +7 116 116 67 52<br>Email: college@mail.com</p></div>
+    </div>
+    """
+    
+    if username == 'director':
+        return STYLE + DIRECTOR_LEFT_PANEL_CONTENT + nav + right_panel + content
+    else:
+        return STYLE + LEFT_PANEL_CONTENT + nav + right_panel + content
+
+@app.route('/schedule')
+def schedule_page():
+    if 'user' not in session: return redirect('/login')
+    username = session['user']
+    nav = get_nav_for_user(username)
+    right_panel = get_right_panel_for_user(username)
+
+    all_groups = sorted(list(set(d['group'] for d in STUDENTS.values() if d['group'] != 'Директор')))
+    
+    if username == "director":
+        html = "<div class='container' style='margin-top:90px;'><h1>Расписание</h1>"
+        html += "<div class='glass'><h2>Выберите группу</h2>"
+        html += "<ul class='group-list'>"
+        for group in all_groups:
+            html += f"<li class='group-item' onclick=\"window.location.href='/schedule/group/{group}'\"><span>{group}</span> <span style='opacity:0.6;'>→</span></li>"
+        html += "</ul></div></div>"
+        return STYLE + DIRECTOR_LEFT_PANEL_CONTENT + nav + right_panel + html
+
+    student_data = STUDENTS.get(username, {})
+    current_group = student_data.get("group", "")
+    schedule = student_data.get("schedule", {})
+    
+    options = "".join([f"<option value='{g}' {'selected' if g == current_group else ''}>{g}</option>" for g in all_groups])
+    
+    html = f"""
+    <div class='container' style='margin-top:90px;'>
+        <h1>Расписание</h1>
+        <div class='glass'>
+            <h3>Моя группа: {current_group}</h3>
+            <div class='group-select-container' style='margin:0; padding:10px 0; background:none;'>
+                <select onchange="if(this.value) window.location.href='/schedule/group/'+this.value">
+                    <option value="" disabled>Изменить группу...</option>
+                    {options}
+                </select>
+            </div>
+        </div>
+        {render_schedule_content(current_group, schedule)}
+    </div>
+    """
+    return STYLE + LEFT_PANEL_CONTENT + nav + right_panel + html
+
+@app.route('/schedule/group/<group_name>')
+def schedule_group(group_name):
+    if 'user' not in session: return redirect('/login')
+    username = session['user']
+    source = request.args.get('source', '')
+    
+    nav = get_nav_for_user(username)
+    right_panel = get_right_panel_for_user(username)
+
+    target_username = None
+    for user, data in STUDENTS.items():
+        if data["group"] == group_name:
+            target_username = user
+            break
+
+    if not target_username:
+        msg = "<div class='container'><div class='glass'><h2>Ошибка</h2><p>Группа не найдена</p><a href='/schedule'>Назад</a></div></div>"
+        if username == 'director': return STYLE + DIRECTOR_LEFT_PANEL_CONTENT + nav + right_panel + msg
+        else: return STYLE + LEFT_PANEL_CONTENT + nav + right_panel + msg
+
+    schedule = STUDENTS[target_username].get("schedule", {})
+    
+    back_link = f"<a href='/schedule' class='view-btn'>← Назад</a>"
+    if source == 'search' and username == 'director':
+        back_link = f"<a href='/director-search?q={group_name}' class='view-btn'>← К поиску</a>"
+
+    html = f"<div class='container' style='margin-top:90px;'><h1>Группа {group_name}</h1>"
+    html += render_schedule_content(group_name, schedule)
+    html += "<div style='margin-top:20px;'>" + back_link + "</div></div>"
+    
+    if username == 'director': return STYLE + DIRECTOR_LEFT_PANEL_CONTENT + nav + right_panel + html
+    else: return STYLE + LEFT_PANEL_CONTENT + nav + right_panel + html
+
+@app.route('/consultations')
+def consultations_page():
+    if 'user' not in session: return redirect('/login')
+    username = session['user']
+    nav = get_nav_for_user(username)
+    right_panel = get_right_panel_for_user(username)
+
+    if username == "director":
+        groups = sorted(list(set(d['group'] for d in STUDENTS.values() if d['group'] != 'Директор')))
+        html = "<div class='container' style='margin-top:90px;'><h1>Консультации</h1>"
+        html += "<div class='glass'><h2>Выберите группу</h2>"
+        html += "<ul class='group-list'>"
+        for group in groups:
+            html += f"<li class='group-item' onclick=\"window.location.href='/consultations/group/{group}'\"><span>{group}</span> <span style='opacity:0.6;'>→</span></li>"
+        html += "</ul></div></div>"
+        return STYLE + DIRECTOR_LEFT_PANEL_CONTENT + nav + right_panel + html
+
+    consultations = STUDENTS.get(username, {}).get("consultations", {})
+    html="<div class='container' style='margin-top:90px;'><h1>Консультации</h1>"
+    if not consultations:
+        html += "<div class='glass'>Нет назначенных консультаций.</div>"
+    else:
+        for day,data in consultations.items():
+            subj,room,time=data
+            html+=f"<div class='glass'><h3>{day}</h3><p style='font-size:18px;'>{time} | <b>{subj}</b> — каб. {room}</p></div>"
+    
+    if username == 'director': return STYLE + DIRECTOR_LEFT_PANEL_CONTENT + nav + right_panel + html + "</div>"
+    else: return STYLE + LEFT_PANEL_CONTENT + nav + right_panel + html + "</div>"
+
+@app.route('/consultations/group/<group_name>')
+def consultations_group(group_name):
+    if 'user' not in session: return redirect('/login')
+    username = session['user']
+    if username != "director": return redirect('/consultations')
+
+    nav = get_nav_for_user(username)
+    right_panel = get_right_panel_for_user(username)
+
+    target_username = None
+    for user, data in STUDENTS.items():
+        if data["group"] == group_name:
+            target_username = user
+            break
+            
+    if not target_username:
+        return STYLE+DIRECTOR_LEFT_PANEL_CONTENT+nav+right_panel+"<div class='container'><div class='glass'><h2>Ошибка</h2><p>Группа не найдена</p><a href='/consultations'>Назад</a></div></div>"
+
+    consultations = STUDENTS[target_username].get("consultations", {})
+    html = f"<div class='container' style='margin-top:90px;'><h1>Консультации: {group_name}</h1>"
+    if not consultations:
+        html += "<div class='glass'>Нет данных.</div>"
+    else:
+        for day,data in consultations.items():
+            subj,room,time=data
+            html+=f"<div class='glass'><h3>{day}</h3><p style='font-size:18px;'>{time} | <b>{subj}</b> — каб. {room}</p></div>"
+
+    html += f"<a href='/consultations' class='view-btn' style='margin-top:15px;'>← Назад</a></div>"
+    return STYLE+DIRECTOR_LEFT_PANEL_CONTENT+nav+right_panel+html
+
+@app.route('/grades')
+def grades_page():
+    if 'user' not in session: return redirect('/login')
+    username = session['user']
+    nav = get_nav_for_user(username)
+    right_panel = get_right_panel_for_user(username)
+
+    if username == "director":
+        groups_map = {}
+        for user, data in STUDENTS.items():
+            if user == "director": continue
+            g = data.get("group", "Без группы")
+            if g not in groups_map: groups_map[g] = []
+            groups_map[g].append(user)
+        
+        html = "<div class='container' style='margin-top:100px;'><h1>Успеваемость</h1>"
+        html += "<div class='glass'><h2>Группы</h2>"
+        html += "<ul class='group-list'>"
+        for group in sorted(groups_map.keys()):
+            count = len(groups_map[group])
+            html += f"<li class='group-item' onclick=\"window.location.href='/grades/group/{group}'\"><span>{group}</span> <span style='opacity:0.6;'>({count} чел.) →</span></li>"
+        html += "</ul></div></div>"
+        return STYLE+DIRECTOR_LEFT_PANEL_CONTENT+nav+right_panel+html
+
+    student_grades = STUDENTS.get(username, {}).get("grades", {})
+    if not student_grades:
+        msg = "<div class='container'><div class='glass'><h2>Нет оценок</h2></div></div>"
+        return STYLE + LEFT_PANEL_CONTENT + nav + right_panel + msg
+
+    html="<div class='container' style='margin-top:100px;'><h1>Мои оценки</h1><div class='glass table-wrap'><table>"
+    html+="<tr><th style='min-width:200px; text-align:left; padding-left:20px;'>Предмет</th>"
+    for i in range(1,21): html+=f"<th>ПЗ.{i}</th>"
+    html+="<th>Ср. балл</th><th>Итог</th></tr>"
+
+    for subj,data in student_grades.items():
+        html+=f"<tr><td style='text-align:left; padding-left:20px; font-weight:500;'>{subj}</td>"
+        pz=data["pz"]
+        filled=[x for x in pz if x is not None]
+        for v in pz:
+            if v is not None:
+                cls = "grade-good" if v >= 80 else ("grade-avg" if v >= 50 else "grade-bad")
+                html+=f"<td class='{cls}'>{v}</td>"
+            else:
+                html+=f"<td>-</td>"
+        avg = int(sum(filled)/len(filled)) if filled else 0
+        final_cls = "grade-good" if avg >= 80 else ("grade-avg" if avg >= 50 else "grade-bad")
+        html+=f"<td class='{final_cls}' style='font-weight:bold; font-size:16px;'>{avg}</td><td class='{final_cls}' style='font-weight:bold; font-size:16px;'>{avg}</td></tr>"
+
+    html+="</table></div></div>"
+    return STYLE + LEFT_PANEL_CONTENT + nav + right_panel + html
+
+@app.route('/grades/group/<group_name>')
+def grades_group_list(group_name):
+    if 'user' not in session or session['user'] != 'director':
+        return redirect('/grades')
+    
+    nav = get_nav_for_user('director')
+    right_panel = get_right_panel_for_user('director')
+    
+    students_in_group = [u for u, d in STUDENTS.items() if d.get('group') == group_name and u != 'director']
+    
+    html = f"<div class='container' style='margin-top:100px;'><h1>Группа {group_name}</h1>"
+    html += "<div class='glass'><h2>Студенты</h2>"
+    html += "<ul class='student-list'>"
+    for student in sorted(students_in_group):
+        html += f"<li class='student-item' onclick=\"window.location.href='/grades/student/{student}'\"><span>{student}</span> <span style='opacity:0.6;'>→</span></li>"
+    html += "</ul>"
+    html += f"<a href='/grades' class='view-btn' style='margin-top:15px;'>← Назад</a>"
+    html += "</div></div>"
+    
+    return STYLE+DIRECTOR_LEFT_PANEL_CONTENT+nav+right_panel+html
+
+@app.route('/grades/student/<student_username>')
+def grades_student(student_username):
+    if 'user' not in session: return redirect('/login')
+    username = session['user']
+    if username != "director": return redirect('/grades')
+
+    nav = get_nav_for_user(username)
+    right_panel = get_right_panel_for_user(username)
+
+    if student_username not in STUDENTS:
+        return STYLE+DIRECTOR_LEFT_PANEL_CONTENT+nav+right_panel+"<div class='container'><div class='glass'><h2>Ошибка</h2><p>Студент не найден</p><a href='/grades'>Назад</a></div></div>"
+
+    student_grades = STUDENTS[student_username].get("grades", {})
+    group = STUDENTS[student_username].get("group", "Неизвестная группа")
+
+    html=f"<div class='container' style='margin-top:100px;'><h1>Оценки: {student_username}</h1>"
+    html += f"<div class='glass' style='margin-bottom:20px;'><strong>Группа:</strong> {group}</div>"
+    
+    if not student_grades:
+        html += "<div class='glass'>Нет данных</div>"
+    else:
+        html+="<div class='glass table-wrap'><table>"
+        html+="<tr><th style='min-width:200px; text-align:left; padding-left:20px;'>Предмет</th>"
+        for i in range(1,21): html+=f"<th>ПЗ.{i}</th>"
+        html+="<th>Ср. балл</th><th>Итог</th></tr>"
+
+        for subj,data in student_grades.items():
+            html+=f"<tr><td style='text-align:left; padding-left:20px; font-weight:500;'>{subj}</td>"
+            pz=data["pz"]
+            filled=[x for x in pz if x is not None]
+            for v in pz:
+                if v is not None:
+                    cls = "grade-good" if v >= 80 else ("grade-avg" if v >= 50 else "grade-bad")
+                    html+=f"<td class='{cls}'>{v}</td>"
+                else:
+                    html+=f"<td>-</td>"
+            avg = int(sum(filled)/len(filled)) if filled else 0
+            final_cls = "grade-good" if avg >= 80 else ("grade-avg" if avg >= 50 else "grade-bad")
+            html+=f"<td class='{final_cls}' style='font-weight:bold; font-size:16px;'>{avg}</td><td class='{final_cls}' style='font-weight:bold; font-size:16px;'>{avg}</td></tr>"
+        html+="</table></div>"
+    
+    back_link = f'/grades/group/{group}' if group != "Неизвестная группа" else '/grades'
+    html += f"<a href='{back_link}' class='view-btn' style='margin-top:15px;'>← Назад</a></div>"
+    return STYLE+DIRECTOR_LEFT_PANEL_CONTENT+nav+right_panel+html
+
+@app.route('/materials')
+def materials():
+    if 'user' not in session: return redirect('/login')
+    username = session['user']
+    nav = get_nav_for_user(username)
+    right_panel = get_right_panel_for_user(username)
+    
+    html = "<div class='container' style='margin-top:90px;'><h1>Учебные материалы</h1>"
+    
+    subjects_to_show = []
+    
+    if username == 'director':
+        # Директор видит ВСЕ предметы
+        subjects_to_show = ALL_SUBJECTS
+        html += "<div class='glass'><p style='color:#a5b4fc;'>Режим администратора: отображаются материалы по всем дисциплинам колледжа.</p></div>"
+    else:
+        # Студент видит только свои предметы
+        student_data = STUDENTS.get(username, {})
+        spec_code = student_data.get("specialty")
+        if spec_code and spec_code in SPECIALTIES:
+            subjects_to_show = SPECIALTIES[spec_code]
+        else:
+            # Для старых аккаунтов или если спец не найдена
+            subjects_to_show = ["Общие материалы", "Физкультура", "Безопасность жизнедеятельности"]
+    
+    html += "<div class='schedule-grid'>"
+    for subj in subjects_to_show:
+        html += f"""
+        <div class='day-card' style='cursor:pointer;' onclick="alert('Материалы по предмету {subj} скоро будут добавлены')">
+            <h3 style='color:#fff;'>{subj}</h3>
+            <p style='font-size:13px; opacity:0.7;'>Лекции, методички и практические работы</p>
+            <div style='margin-top:15px;'><span class='view-btn' style='font-size:12px; padding:5px 10px;'>Открыть</span></div>
+        </div>
+        """
+    html += "</div></div>"
+    
+    if username == 'director':
+        return STYLE + DIRECTOR_LEFT_PANEL_CONTENT + nav + right_panel + html
+    else:
+        return STYLE + LEFT_PANEL_CONTENT + nav + right_panel + html
+
+@app.route('/faq')
+def faq():
+    if 'user' not in session: return redirect('/login')
+    username = session['user']
+    nav = get_nav_for_user(username)
+    right_panel = get_right_panel_for_user(username)
+    
+    html = """
+    <div class='container' style='margin-top:90px;'>
+        <h1>FAQ</h1>
+        <div class='glass'>
+            <h3>Как узнать расписание?</h3>
+            <p>Раздел "Расписание" автоматически показывает пары вашей группы.</p>
+        </div>
+        <div class='glass'>
+            <h3>Где оценки?</h3>
+            <p>В разделе "Оценки" доступна полная ведомость с баллами.</p>
+        </div>
+        <div class='glass'>
+            <h3>Связь с куратором</h3>
+            <p>Используйте чат в правой панели экрана.</p>
+        </div>
+    </div>
+    """
+    panel = DIRECTOR_LEFT_PANEL_CONTENT if username == 'director' else LEFT_PANEL_CONTENT
+    return STYLE + panel + nav + right_panel + html
+
+@app.route('/chat', methods=['GET', 'POST'])
+def chat():
+    if 'user' not in session: return redirect('/login')
+    username = session['user']
+    if username == 'director': return redirect('/')
+    
+    nav = get_nav_for_user(username)
+    right_panel = get_right_panel_for_user(username)
+    
+    if request.method == 'POST':
+        msg = request.form.get('message', '')
+        if msg:
+            CHAT.append({"user": username, "msg": msg})
+            return redirect('/chat')
+    
+    html = "<div class='container' style='margin-top:90px;'><h1>Чат с куратором</h1>"
+    html += "<div class='glass' style='height: 400px; overflow-y: auto; margin-bottom: 20px; background: rgba(0,0,0,0.3);'>"
+    if not CHAT:
+        html += "<p style='text-align:center; opacity:0.5; margin-top:150px;'>История пуста</p>"
+    else:
+        for entry in CHAT:
+            style = "text-align:right; color:#a5b4fc;" if entry['user'] == username else "text-align:left; color:#fff;"
+            html += f"<p style='{style}'><b>{entry['user']}:</b> {entry['msg']}</p>"
+    html += "</div>"
+    
+    html += """
+    <div class='glass'>
+        <form method='post'>
+            <textarea name='message' rows='3' placeholder='Сообщение...'></textarea>
+            <button type='submit'>Отправить</button>
+        </form>
+    </div>
+    </div>
+    """
+    return STYLE + LEFT_PANEL_CONTENT + nav + right_panel + html
+
+@app.route('/notifications')
+def notifications():
+    if 'user' not in session: return redirect('/login')
+    username = session['user']
+    nav = get_nav_for_user(username)
+    right_panel = get_right_panel_for_user(username)
+    
+    html = "<div class='container' style='margin-top:90px;'><h1>Уведомления</h1>"
+    for note in NOTIFICATIONS:
+        html += f"<div class='glass'><p>{note}</p></div>"
+    html += "</div>"
+    
+    panel = DIRECTOR_LEFT_PANEL_CONTENT if username == 'director' else LEFT_PANEL_CONTENT
+    return STYLE + panel + nav + right_panel + html
+
+@app.route('/notifications-director', methods=['GET', 'POST'])
+def notifications_director():
+    if 'user' not in session or session['user'] != 'director':
+        return redirect('/login')
+    
+    nav = get_nav_for_user('director')
+    right_panel = get_right_panel_for_user('director')
+    
+    if request.method == 'POST':
+        msg = request.form.get('message', '')
+        if msg:
+            NOTIFICATIONS.append(msg)
+            return redirect('/notifications')
+    
+    html = """
+    <div class='container' style='margin-top:90px;'>
+        <h1>Новое оповещение</h1>
+        <div class='glass'>
+            <form method='post'>
+                <textarea name='message' rows='5' placeholder='Текст уведомления для всех кураторов и студентов...'></textarea>
+                <button type='submit' style='margin-top:15px;'>Отправить всем</button>
+            </form>
+        </div>
+        <a href='/notifications' class='view-btn'>Просмотреть ленту</a>
+    </div>
+    """
+    return STYLE + DIRECTOR_LEFT_PANEL_CONTENT + nav + right_panel + html
+
+@app.route('/admin')
+def admin():
+    if 'user' not in session or session['user'] != 'director':
+        return redirect('/login')
+    
+    nav = get_nav_for_user('director')
+    right_panel = get_right_panel_for_user('director')
+    
+    html = "<div class='container' style='margin-top:90px;'><h1>Панель директора</h1>"
+    
+    # Заявки
+    html += "<div class='glass'><h2>Заявки на регистрацию</h2>"
+    if not PENDING_USERS:
+        html += "<p>Нет новых заявок.</p>"
+    else:
+        for user in list(PENDING_USERS.keys()):
+            html += f"""
+            <div style='display:flex; justify-content:space-between; align-items:center; padding:15px; background:rgba(255,255,255,0.05); margin:10px 0; border-radius:10px;'>
+                <span>{user}</span>
+                <div style='display:flex; gap:10px;'>
+                    <a href='/approve/{user}' class='action-btn approve-btn' title='Одобрить'>✔</a>
+                    <a href='/reject/{user}' class='action-btn reject-btn' title='Отклонить'>✖</a>
+                </div>
+            </div>
+            """
+    html += "</div>"
+    
+    # Статистика
+    total_students = len([u for u in STUDENTS if u != 'director'])
+    total_groups = len(set(d['group'] for d in STUDENTS.values() if d['group'] != 'Директор'))
+    
+    html += f"""
+    <div class='schedule-grid'>
+        <div class='day-card' style='text-align:center;'>
+            <h3>Студентов</h3>
+            <p style='font-size:32px; font-weight:bold; color:#4ade80;'>{total_students}</p>
+        </div>
+        <div class='day-card' style='text-align:center;'>
+            <h3>Групп</h3>
+            <p style='font-size:32px; font-weight:bold; color:#60a5fa;'>{total_groups}</p>
+        </div>
+        <div class='day-card' style='text-align:center;'>
+            <h3>Заявок</h3>
+            <p style='font-size:32px; font-weight:bold; color:#fbbf24;'>{len(PENDING_USERS)}</p>
+        </div>
+    </div>
+    </div>
+    """
+    return STYLE + DIRECTOR_LEFT_PANEL_CONTENT + nav + right_panel + html
+
+@app.route('/approve/<username>')
+def approve(username):
+    if 'user' not in session or session['user'] != 'director': return redirect('/login')
+    approve_user(username)
+    return redirect('/admin')
+
+@app.route('/reject/<username>')
+def reject(username):
+    if 'user' not in session or session['user'] != 'director': return redirect('/login')
+    reject_user(username)
+    return redirect('/admin')
+
+@app.route('/logout')
+def logout():
+    session.pop('user', None)
+    return redirect('/login')
+
+if __name__ == '__main__':
+    app.run(debug=True)
